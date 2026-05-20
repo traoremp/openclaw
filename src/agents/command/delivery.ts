@@ -40,6 +40,10 @@ import { isNestedAgentLane } from "../lanes.js";
 import type { AgentCommandOpts, AgentCommandResultMetaOverrides } from "./types.js";
 
 const ttsRuntimeLoader = createLazyImportLoader(() => import("../../tts/tts.runtime.js"));
+<<<<<<< HEAD
+=======
+
+>>>>>>> c1275e50fe (Add stock-trader extension)
 type RunResult = Awaited<ReturnType<(typeof import("../embedded-agent.js"))["runEmbeddedAgent"]>>;
 type DurableSendResult = Awaited<ReturnType<typeof sendDurableMessageBatch>>;
 

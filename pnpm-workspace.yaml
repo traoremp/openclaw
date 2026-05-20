@@ -112,6 +112,8 @@ allowBuilds:
   "@openclaw/proxyline": true
   clawpdf: true
   rastermill: true
+  '@napi-rs/canvas': set this to true or false
+  sharp: set this to true or false
 
 packageExtensions:
   baileys:
