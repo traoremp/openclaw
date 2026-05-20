@@ -1,0 +1,26 @@
+{
+  "id": "stock-trader",
+  "name": "Stock Trader",
+  "description": "Swing trading tools: Alpaca brokerage, Google Sheets reporting, SEC EDGAR filings, StockTwits sentiment",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "get_account",
+      "get_positions",
+      "get_orders",
+      "get_bars",
+      "get_news",
+      "place_order",
+      "get_stocktwits_sentiment",
+      "get_sec_filing",
+      "sheets_write",
+      "check_risk_gate"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

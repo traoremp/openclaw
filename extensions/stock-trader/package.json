@@ -1,0 +1,24 @@
+{
+  "name": "@openclaw/stock-trader",
+  "version": "1.0.0",
+  "description": "Automated swing trading plugin — Alpaca, Google Sheets, SEC EDGAR, StockTwits",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:node:* --external:openclaw/plugin-sdk/*"
+  },
+  "dependencies": {
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "compat": {
+      "pluginApi": ">=2026.5.17"
+    },
+    "build": {
+      "openclawVersion": "2026.5.17"
+    }
+  }
+}

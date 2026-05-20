@@ -25,10 +25,14 @@ import {
 } from "../../infra/outbound/payloads.js";
 import type { OutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
+import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { shouldAttemptTtsPayload } from "../../tts/tts-config.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { isNestedAgentLane } from "../lanes.js";
 import type { EmbeddedPiRunMeta } from "../pi-embedded-runner/types.js";
 import type { AgentCommandOpts, AgentCommandResultMetaOverrides } from "./types.js";
+
+const ttsRuntimeLoader = createLazyImportLoader(() => import("../../tts/tts.runtime.js"));
 
 type RunResult = Awaited<ReturnType<(typeof import("../pi-embedded.js"))["runEmbeddedPiAgent"]>>;
 type DurableSendResult = Awaited<ReturnType<typeof sendDurableMessageBatch>>;
@@ -225,6 +229,41 @@ function noVisiblePayloadStatus(): AgentCommandDeliveryStatus {
     reason: "no_visible_payload",
     resultCount: 0,
   };
+}
+
+async function maybeApplyTtsToDeliveryPayloads(params: {
+  cfg: OpenClawConfig;
+  payloads: ReplyPayload[];
+  channel: string;
+  agentId?: string;
+  accountId?: string;
+}): Promise<ReplyPayload[]> {
+  if (params.payloads.length === 0) {
+    return params.payloads;
+  }
+  if (
+    !shouldAttemptTtsPayload({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      channelId: params.channel,
+      accountId: params.accountId,
+    })
+  ) {
+    return params.payloads;
+  }
+  const { maybeApplyTtsToPayload } = await ttsRuntimeLoader.load();
+  return await Promise.all(
+    params.payloads.map((payload) =>
+      maybeApplyTtsToPayload({
+        payload,
+        cfg: params.cfg,
+        channel: params.channel,
+        kind: "final",
+        agentId: params.agentId,
+        accountId: params.accountId,
+      }),
+    ),
+  );
 }
 
 async function normalizeReplyMediaPathsForDelivery(params: {
@@ -483,7 +522,21 @@ export async function deliverAgentCommandResult(params: {
           accountId: resolvedAccountId,
         })
       : normalizedReplyPayloads;
-  const outboundPayloadPlan = createOutboundPayloadPlan(mediaNormalizedReplyPayloads);
+  const ttsAgentId =
+    outboundSession?.agentId ??
+    opts.agentId ??
+    resolveSessionAgentId({ sessionKey: effectiveSessionKey, config: cfg });
+  const ttsNormalizedReplyPayloads =
+    deliver && !deliveryStatus && !isInternalMessageChannel(deliveryChannel)
+      ? await maybeApplyTtsToDeliveryPayloads({
+          cfg,
+          payloads: mediaNormalizedReplyPayloads,
+          channel: deliveryChannel,
+          agentId: ttsAgentId ?? undefined,
+          accountId: resolvedAccountId,
+        })
+      : mediaNormalizedReplyPayloads;
+  const outboundPayloadPlan = createOutboundPayloadPlan(ttsNormalizedReplyPayloads);
   const normalizedPayloads = projectOutboundPayloadPlanForJson(outboundPayloadPlan);
   const resultMeta = mergeResultMetaOverrides(result.meta, opts.resultMetaOverrides);
   const emitJsonEnvelope = (status?: AgentCommandDeliveryStatus) => {
