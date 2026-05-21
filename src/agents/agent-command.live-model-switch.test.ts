@@ -62,9 +62,10 @@ vi.mock("./command/attempt-execution.runtime.js", () => ({
   emitAcpLifecycleEnd: vi.fn(),
   emitAcpLifecycleError: vi.fn(),
   emitAcpLifecycleStart: vi.fn(),
+  emitAcpRuntimeEvent: vi.fn(),
   persistAcpTurnTranscript: (...args: unknown[]) => state.persistAcpTurnTranscriptMock(...args),
   persistSessionEntry: vi.fn(),
-  prependInternalEventContext: (_body: string) => _body,
+  prependInternalEventContext: (body: string) => body,
   runAgentAttempt: (...args: unknown[]) => state.runAgentAttemptMock(...args),
   sessionFileHasContent: vi.fn(async () => false),
 }));
@@ -705,7 +706,6 @@ async function runBasicAgentCommand() {
   await agentCommand({
     message: "hello",
     to: "+1234567890",
-    senderIsOwner: true,
   });
 }
 
@@ -854,7 +854,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     await agentCommand({
       message: "hello",
       to: "+1234567890",
-      senderIsOwner: true,
       thinking: "xhigh",
     });
 
@@ -913,7 +912,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     await agentCommand({
       message: "hello",
       to: "+1234567890",
-      senderIsOwner: true,
       thinking: "xhigh",
     });
 
@@ -1028,7 +1026,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     await agentCommand({
       message: "internal handoff",
       to: "+1234567890",
-      senderIsOwner: true,
       suppressPromptPersistence: true,
     });
 
@@ -1044,7 +1041,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       agentCommand({
         message: "hello",
         to: "+1234567890",
-        senderIsOwner: true,
       }),
     ).rejects.toThrow("provider down");
 
@@ -1371,7 +1367,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
         INTERNAL_RUNTIME_CONTEXT_END,
       ].join("\n"),
       sessionKey: "agent:main",
-      senderIsOwner: true,
       internalEvents: [
         {
           type: "task_completion",
@@ -1422,7 +1417,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     await agentCommand({
       message: "bootstrap ACP child",
       sessionKey: "agent:main",
-      senderIsOwner: true,
       acpTurnSource: "manual_spawn",
     });
 
@@ -1447,7 +1441,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       agentCommand({
         message: "automatic ACP turn",
         sessionKey: "agent:main",
-        senderIsOwner: true,
       }),
     ).rejects.toThrow("ACP dispatch is disabled");
 

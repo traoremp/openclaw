@@ -300,10 +300,7 @@ function normalizeExplicitOverrideInput(raw: string, kind: "provider" | "model")
   return trimmed;
 }
 
-async function prepareAgentCommandExecution(
-  opts: AgentCommandOpts & { senderIsOwner: boolean },
-  runtime: RuntimeEnv,
-) {
+async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: RuntimeEnv) {
   const isRawModelRun = opts.modelRun === true || opts.promptMode === "none";
   const message = opts.message ?? "";
   if (!message.trim()) {
@@ -483,7 +480,7 @@ async function prepareAgentCommandExecution(
 }
 
 async function agentCommandInternal(
-  opts: AgentCommandOpts & { senderIsOwner: boolean },
+  opts: AgentCommandOpts,
   runtime: RuntimeEnv = defaultRuntime,
   deps?: CliDeps,
 ) {
@@ -575,7 +572,23 @@ async function agentCommandInternal(
           mode: "prompt",
           requestId: runId,
           signal: opts.abortSignal,
+          onLifecycle: (event) => {
+            if (event.type === "prompt_submitted") {
+              attemptExecutionRuntime.emitAcpPromptSubmitted({
+                runId,
+                sessionKey,
+                at: event.at,
+              });
+            }
+          },
           onEvent: (event) => {
+            if (event.type !== "text_delta") {
+              attemptExecutionRuntime.emitAcpRuntimeEvent({
+                runId,
+                sessionKey,
+                event,
+              });
+            }
             if (event.type === "done") {
               stopReason = event.stopReason;
               return;
@@ -1100,6 +1113,7 @@ async function agentCommandInternal(
         const effectiveFallbacksOverride = resolveEffectiveModelFallbacks({
           cfg,
           agentId: sessionAgentId,
+          sessionKey,
           hasSessionModelOverride:
             hasExplicitRunOverride || Boolean(storedProviderOverride || storedModelOverride),
           modelOverrideSource: hasExplicitRunOverride ? "user" : storedModelOverrideSource,
@@ -1117,6 +1131,19 @@ async function agentCommandInternal(
           ...modelManifestContext,
           runId,
           agentDir,
+          agentId: sessionAgentId,
+          sessionKey: sessionKey ?? sessionId,
+          prepareAgentHarnessRuntime: async ({ provider, model, agentHarnessRuntimeOverride }) => {
+            await ensureSelectedAgentHarnessPlugin({
+              config: cfg,
+              provider,
+              modelId: model,
+              agentId: sessionAgentId,
+              sessionKey,
+              agentHarnessRuntimeOverride,
+              workspaceDir,
+            });
+          },
           fallbacksOverride: effectiveFallbacksOverride,
           onFallbackStep: (step) => {
             fallbackTrajectoryRecorder?.recordEvent("model.fallback_step", step);
@@ -1444,7 +1471,6 @@ async function agentCommandInternal(
           skillsSnapshot,
           messageChannel,
           agentAccountId: runContext.accountId,
-          senderIsOwner: opts.senderIsOwner,
           thinkLevel: resolvedThinkLevel,
           extraSystemPrompt: opts.extraSystemPrompt,
         });
@@ -1494,7 +1520,23 @@ async function agentCommandInternal(
     }
 
     const { deliverAgentCommandResult } = await loadDeliveryRuntime();
-    const deliveryResult = await deliverAgentCommandResult({
+    const resolveFreshSessionEntryForDelivery =
+      sessionStore && sessionKey
+        ? async (): Promise<SessionEntry | undefined> => {
+            const { loadSessionStore } = await loadSessionStoreRuntime();
+            const freshStore = loadSessionStore(storePath, {
+              skipCache: true,
+              clone: false,
+            });
+            const freshEntry = freshStore[sessionKey];
+            if (!freshEntry || freshEntry.sessionId !== sessionId) {
+              return undefined;
+            }
+            sessionStore[sessionKey] = freshEntry;
+            return freshEntry;
+          }
+        : undefined;
+    const deliveryParams = {
       cfg,
       deps: resolvedDeps,
       runtime,
@@ -1503,7 +1545,16 @@ async function agentCommandInternal(
       sessionEntry,
       result,
       payloads,
-    });
+    };
+    const deliveryResult = await deliverAgentCommandResult(
+      resolveFreshSessionEntryForDelivery
+        ? {
+            ...deliveryParams,
+            expectedSessionIdForFreshDelivery: sessionId,
+            resolveFreshSessionEntryForDelivery,
+          }
+        : deliveryParams,
+    );
 
     // Phase 2: Clear pending delivery payload after successful delivery.
     if (
@@ -1551,7 +1602,7 @@ export async function agentCommand(
         {
           ...opts,
           // agentCommand is the trusted-operator entrypoint used by CLI/local flows.
-          // Ingress callers must opt into owner semantics explicitly via
+          // Ingress callers must opt into owner identity explicitly via
           // agentCommandFromIngress so network-facing paths cannot inherit this default by accident.
           senderIsOwner: opts.senderIsOwner ?? true,
           // Local/CLI callers are trusted by default for per-run model overrides.
@@ -1568,26 +1619,20 @@ export async function agentCommandFromIngress(
   runtime: RuntimeEnv = defaultRuntime,
   deps?: CliDeps,
 ) {
-  if (typeof opts.senderIsOwner !== "boolean") {
-    // HTTP/WS ingress must declare the trust level explicitly at the boundary.
-    // This keeps network-facing callers from silently picking up the local trusted default.
-    throw new Error("senderIsOwner must be explicitly set for ingress agent runs.");
-  }
   if (typeof opts.allowModelOverride !== "boolean") {
     throw new Error("allowModelOverride must be explicitly set for ingress agent runs.");
   }
   return await agentCommandInternal(
-    {
-      ...opts,
-      senderIsOwner: opts.senderIsOwner,
-      allowModelOverride: opts.allowModelOverride,
-    },
+    { ...opts, senderIsOwner: opts.senderIsOwner === true },
     runtime,
     deps,
   );
 }
 
-export const __testing = {
+export const testing = {
   resolveAgentRuntimeConfig,
   prepareAgentCommandExecution,
 };
+
+/** @deprecated Use `testing`. */
+export { testing as __testing };

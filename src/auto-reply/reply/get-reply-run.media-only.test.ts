@@ -1,5 +1,8 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearActiveEmbeddedRun,
   setActiveEmbeddedRun,
@@ -118,7 +121,6 @@ vi.mock("./session-updates.runtime.js", () => ({
 
 vi.mock("./session-system-events.js", () => ({
   drainFormattedSystemEvents: vi.fn().mockResolvedValue(undefined),
-  drainFormattedSystemEventBlock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./typing-mode.js", () => ({
@@ -128,14 +130,14 @@ vi.mock("./typing-mode.js", () => ({
 let runPreparedReply: typeof import("./get-reply-run.js").runPreparedReply;
 let runReplyAgent: typeof import("./agent-runner.runtime.js").runReplyAgent;
 let routeReply: typeof import("./route-reply.runtime.js").routeReply;
-let drainFormattedSystemEventBlock: typeof import("./session-system-events.js").drainFormattedSystemEventBlock;
+let drainFormattedSystemEvents: typeof import("./session-system-events.js").drainFormattedSystemEvents;
 let resolveTypingMode: typeof import("./typing-mode.js").resolveTypingMode;
 let buildDirectChatContext: typeof import("./groups.js").buildDirectChatContext;
 let buildGroupChatContext: typeof import("./groups.js").buildGroupChatContext;
 let buildInboundUserContextPrefix: typeof import("./inbound-meta.js").buildInboundUserContextPrefix;
 let resolveInboundUserContextPromptJoiner: typeof import("./inbound-meta.js").resolveInboundUserContextPromptJoiner;
 let getActiveReplyRunCount: typeof import("./reply-run-registry.js").getActiveReplyRunCount;
-let replyRunTesting: typeof import("./reply-run-registry.js").__testing;
+let replyRunTesting: typeof import("./reply-run-registry.js").testing;
 let loadScopeCounter = 0;
 
 function createGatewayDrainingError(): Error {
@@ -269,16 +271,18 @@ function requireLastRunReplyAgentCall() {
 }
 
 describe("runPreparedReply media-only handling", () => {
+  const cleanupPaths: string[] = [];
+
   beforeAll(async () => {
     ({ runPreparedReply } = await import("./get-reply-run.js"));
     ({ runReplyAgent } = await import("./agent-runner.runtime.js"));
     ({ routeReply } = await import("./route-reply.runtime.js"));
-    ({ drainFormattedSystemEventBlock } = await import("./session-system-events.js"));
+    ({ drainFormattedSystemEvents } = await import("./session-system-events.js"));
     ({ resolveTypingMode } = await import("./typing-mode.js"));
     ({ buildDirectChatContext, buildGroupChatContext } = await import("./groups.js"));
     ({ buildInboundUserContextPrefix, resolveInboundUserContextPromptJoiner } =
       await import("./inbound-meta.js"));
-    ({ __testing: replyRunTesting, getActiveReplyRunCount } =
+    ({ testing: replyRunTesting, getActiveReplyRunCount } =
       await import("./reply-run-registry.js"));
   });
 
@@ -287,6 +291,11 @@ describe("runPreparedReply media-only handling", () => {
     updateSessionStore.mockReset();
     vi.clearAllMocks();
     replyRunTesting.resetReplyRunRegistry();
+  });
+
+  afterEach(() => {
+    const paths = cleanupPaths.splice(0);
+    return Promise.all(paths.map((entry) => rm(entry, { recursive: true, force: true })));
   });
 
   it("does not load session store runtime on module import", async () => {
@@ -870,6 +879,59 @@ describe("runPreparedReply media-only handling", () => {
     expect(call?.followupRun.prompt).toContain("[User sent media without caption]");
   });
 
+  it("hydrates current MediaPaths into queued followup images", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-followup-image-"));
+    cleanupPaths.push(tmpDir);
+    const imagePath = path.join(tmpDir, "inbound.png");
+    await writeFile(
+      imagePath,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
+
+    const result = await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "describe this",
+          RawBody: "describe this",
+          CommandBody: "describe this",
+          MediaPaths: [imagePath],
+          MediaTypes: ["image/png"],
+          MediaWorkspaceDir: tmpDir,
+          OriginatingChannel: "discord",
+          OriginatingTo: "C123",
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: "describe this",
+          BodyStripped: "describe this",
+          Provider: "discord",
+          OriginatingChannel: "discord",
+          OriginatingTo: "C123",
+          ChatType: "group",
+          MediaPaths: [imagePath],
+          MediaTypes: ["image/png"],
+          MediaWorkspaceDir: tmpDir,
+        },
+      }),
+    );
+
+    expect(result).toEqual({ text: "ok" });
+    expect(vi.mocked(runReplyAgent)).toHaveBeenCalledOnce();
+    const call = requireRunReplyAgentCall();
+    expect(call.followupRun.images).toEqual([
+      {
+        type: "image",
+        data: expect.any(String),
+        mimeType: "image/png",
+      },
+    ]);
+    expect(call.followupRun.images?.[0]?.data).toHaveLength(92);
+    expect(call.followupRun.imageOrder).toEqual(["inline"]);
+  });
+
   it("does not send a standalone reset notice for reply-producing /new turns", async () => {
     await runPreparedReply(
       baseParams({
@@ -1386,15 +1448,9 @@ describe("runPreparedReply media-only handling", () => {
   it("re-drains system events after waiting behind an active run", async () => {
     const queueSettings = await import("./queue/settings-runtime.js");
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
-    vi.mocked(drainFormattedSystemEventBlock)
-      .mockResolvedValueOnce({
-        text: "System: [t] Initial event.",
-        forceSenderIsOwnerFalse: false,
-      })
-      .mockResolvedValueOnce({
-        text: "System: [t] Post-compaction context.",
-        forceSenderIsOwnerFalse: false,
-      });
+    vi.mocked(drainFormattedSystemEvents)
+      .mockResolvedValueOnce("System: [t] Initial event.")
+      .mockResolvedValueOnce("System: [t] Post-compaction context.");
 
     const previousRun = createReplyOperation({
       sessionId: "session-events-after-wait",
@@ -1468,6 +1524,58 @@ describe("runPreparedReply media-only handling", () => {
     );
   });
 
+  it("runs bare mention replies when the reply target is the current-turn context", async () => {
+    vi.mocked(buildInboundUserContextPrefix).mockReturnValueOnce(
+      [
+        "Reply target of current user message (untrusted, for context):",
+        "```json",
+        JSON.stringify({ sender_label: "Bot", body: "quoted status body" }, null, 2),
+        "```",
+      ].join("\n"),
+    );
+
+    const result = await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "",
+          RawBody: "@bot",
+          CommandBody: "@bot",
+          Provider: "telegram",
+          Surface: "telegram",
+          ChatType: "group",
+          ReplyToBody: "quoted status body",
+          ReplyToSender: "Bot",
+        },
+        sessionCtx: {
+          Body: "",
+          BodyStripped: "",
+          RawBody: "@bot",
+          CommandBody: "@bot",
+          Provider: "telegram",
+          Surface: "telegram",
+          ChatType: "group",
+          ReplyToBody: "quoted status body",
+          ReplyToSender: "Bot",
+        },
+        command: {
+          ...baseParams().command,
+          rawBodyNormalized: "@bot",
+          commandBodyNormalized: "",
+        } as never,
+      }),
+    );
+
+    expect(result).toEqual({ text: "ok" });
+    const call = requireLastRunReplyAgentCall();
+    expect(call?.transcriptCommandBody).toBe("");
+    expect(call?.followupRun.prompt).toBe("");
+    expect(call?.followupRun.transcriptPrompt).toBe("");
+    expect(call?.followupRun.currentInboundContext?.text).toContain(
+      "Reply target of current user message",
+    );
+    expect(call?.followupRun.currentInboundContext?.text).toContain("quoted status body");
+  });
+
   it("runs room events as contextual events instead of direct user prompts", async () => {
     vi.mocked(buildInboundUserContextPrefix).mockReturnValueOnce(
       [
@@ -1530,6 +1638,7 @@ describe("runPreparedReply media-only handling", () => {
   it("queues active room events as followups instead of steering fake prompts", async () => {
     const queueSettings = await import("./queue/settings-runtime.js");
     const piRuntime = await import("../../agents/pi-embedded.runtime.js");
+    const abortController = new AbortController();
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({
       mode: "steer",
       debounceMs: 500,
@@ -1547,6 +1656,7 @@ describe("runPreparedReply media-only handling", () => {
 
     await runPreparedReply(
       baseParams({
+        opts: { abortSignal: abortController.signal },
         ctx: {
           Body: "ambient",
           RawBody: "ambient",
@@ -1575,7 +1685,56 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.resolvedQueue.mode).toBe("steer");
     expect(call.followupRun.prompt).toBe("[OpenClaw room event]");
     expect(call.followupRun.currentInboundEventKind).toBe("room_event");
+    expect(call.followupRun.abortSignal).toBe(abortController.signal);
     expect(call.followupRun.currentInboundContext?.text).toContain("Current event:");
+  });
+
+  it("detaches queued user requests from superseded source abort signals", async () => {
+    const queueSettings = await import("./queue/settings-runtime.js");
+    const piRuntime = await import("../../agents/pi-embedded.runtime.js");
+    const abortController = new AbortController();
+    vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({
+      mode: "collect",
+      debounceMs: 500,
+      cap: 20,
+      dropPolicy: "summarize",
+    });
+    vi.mocked(piRuntime.resolveActiveEmbeddedRunSessionId)
+      .mockReturnValueOnce("active-session")
+      .mockReturnValueOnce("active-session");
+    vi.mocked(piRuntime.isEmbeddedPiRunActive).mockReturnValueOnce(true);
+    vi.mocked(piRuntime.isEmbeddedPiRunStreaming).mockReturnValueOnce(true);
+    vi.mocked(buildInboundUserContextPrefix).mockReturnValueOnce("user request context");
+
+    await runPreparedReply(
+      baseParams({
+        opts: { abortSignal: abortController.signal },
+        ctx: {
+          Body: "@bot keep this",
+          RawBody: "@bot keep this",
+          CommandBody: "@bot keep this",
+          Provider: "telegram",
+          Surface: "telegram",
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: "@bot keep this",
+          BodyStripped: "@bot keep this",
+          Provider: "telegram",
+          Surface: "telegram",
+          ChatType: "group",
+          InboundEventKind: "user_request",
+          MessageSid: "994",
+          SenderName: "Alice",
+        },
+      }),
+    );
+
+    const call = requireLastRunReplyAgentCall();
+    expect(call.shouldFollowup).toBe(true);
+    expect(call.isActive).toBe(true);
+    expect(call.followupRun.currentInboundEventKind).toBe("user_request");
+    expect(call.followupRun.abortSignal).toBeUndefined();
   });
 
   it("queues active room events instead of interrupting active user requests", async () => {
@@ -1757,7 +1916,7 @@ describe("runPreparedReply media-only handling", () => {
     ["/new", "new"],
     ["/reset", "reset"],
   ] as const)(
-    "keeps inbound sender context in the bare %s model prompt while hiding startup instructions from transcript prompt",
+    "keeps inbound sender context in reply-targeted bare %s model prompt while hiding startup instructions from transcript prompt",
     async (commandText, startupAction) => {
       vi.mocked(buildInboundUserContextPrefix).mockReturnValueOnce(
         [
@@ -1777,6 +1936,8 @@ describe("runPreparedReply media-only handling", () => {
             Provider: "webchat",
             Surface: "webchat",
             ChatType: "direct",
+            ReplyToBody: "quoted reset target",
+            ReplyToSender: "Ada Lovelace",
           },
           sessionCtx: {
             Body: "",
@@ -1786,6 +1947,8 @@ describe("runPreparedReply media-only handling", () => {
             ChatType: "direct",
             SenderId: "telegram-user-1",
             SenderName: "Ada Lovelace",
+            ReplyToBody: "quoted reset target",
+            ReplyToSender: "Ada Lovelace",
           },
           command: {
             surface: "webchat",
@@ -1992,10 +2155,7 @@ describe("runPreparedReply media-only handling", () => {
   });
 
   it("routes queued system events into user prompt text, not system prompt context", async () => {
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce({
-      text: "System: [t] Model switched.",
-      forceSenderIsOwnerFalse: false,
-    });
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce("System: [t] Model switched.");
 
     await runPreparedReply(baseParams());
 
@@ -2004,24 +2164,10 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.followupRun.run.extraSystemPrompt ?? "").not.toContain("Runtime System Events");
   });
 
-  it("downgrades sender ownership when drained system events request owner downgrade", async () => {
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce({
-      text: "System: [t] External webhook payload.",
-      forceSenderIsOwnerFalse: true,
-    });
-    const params = ownerParams();
-
-    await runPreparedReply(params);
-
-    const call = requireRunReplyAgentCall();
-    expect(call?.followupRun.run.senderIsOwner).toBe(false);
-  });
-
-  it("keeps sender ownership when drained system events do not request owner downgrade", async () => {
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce({
-      text: "System: [t] Trusted event.",
-      forceSenderIsOwnerFalse: false,
-    });
+  it("keeps sender ownership when queued system events are prepended", async () => {
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce(
+      "System: [t] External webhook payload.",
+    );
     const params = ownerParams();
 
     await runPreparedReply(params);
@@ -2030,11 +2176,20 @@ describe("runPreparedReply media-only handling", () => {
     expect(call?.followupRun.run.senderIsOwner).toBe(true);
   });
 
-  it("does not downgrade sender ownership when trusted event text contains the untrusted marker", async () => {
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce({
-      text: "System: [t] Relay text mentions System (untrusted): but event is trusted.",
-      forceSenderIsOwnerFalse: false,
-    });
+  it("keeps sender ownership when drained system events are present", async () => {
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce("System: [t] Trusted event.");
+    const params = ownerParams();
+
+    await runPreparedReply(params);
+
+    const call = requireRunReplyAgentCall();
+    expect(call?.followupRun.run.senderIsOwner).toBe(true);
+  });
+
+  it("does not downgrade sender ownership when event text contains the untrusted marker", async () => {
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce(
+      "System: [t] Relay text mentions System (untrusted): but event is trusted.",
+    );
     const params = ownerParams();
 
     await runPreparedReply(params);
@@ -2044,13 +2199,10 @@ describe("runPreparedReply media-only handling", () => {
   });
 
   it("preserves first-token think hint when system events are prepended", async () => {
-    // drainFormattedSystemEventBlock returns the events block; the caller prepends it.
+    // drainFormattedSystemEvents returns the events block; the caller prepends it.
     // The hint must be extracted from the user body BEFORE prepending, so "System:"
     // does not shadow the low|medium|high shorthand.
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce({
-      text: "System: [t] Node connected.",
-      forceSenderIsOwnerFalse: false,
-    });
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce("System: [t] Node connected.");
 
     await runPreparedReply(
       baseParams({
@@ -2071,12 +2223,9 @@ describe("runPreparedReply media-only handling", () => {
   });
 
   it("carries system events into followupRun.prompt for deferred turns", async () => {
-    // drainFormattedSystemEventBlock returns the events block; the caller prepends it to
+    // drainFormattedSystemEvents returns the events block; the caller prepends it to
     // effectiveBaseBody for the queue path so deferred turns see events.
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce({
-      text: "System: [t] Node connected.",
-      forceSenderIsOwnerFalse: false,
-    });
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce("System: [t] Node connected.");
 
     await runPreparedReply(baseParams());
 
@@ -2087,7 +2236,7 @@ describe("runPreparedReply media-only handling", () => {
   it("does not strip think-hint token from deferred queue body", async () => {
     // In steer mode the inferred thinkLevel is never consumed, so the first token
     // must not be stripped from the queue/steer body (followupRun.prompt).
-    vi.mocked(drainFormattedSystemEventBlock).mockResolvedValueOnce(undefined);
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce(undefined);
 
     await runPreparedReply(
       baseParams({

@@ -852,7 +852,7 @@ export async function prepareSlackMessage(params: {
   const shouldRequireMention = isRoom
     ? (channelConfig?.requireMention ?? ctx.defaultRequireMention)
     : false;
-  if (message._ambiguousThreadReply) {
+  if (message["_ambiguousThreadReply"]) {
     ctx.logger.info(
       {
         channel: message.channel,
@@ -1116,8 +1116,6 @@ export async function prepareSlackMessage(params: {
   enqueueSystemEvent(`${inboundLabel}: ${preview}`, {
     sessionKey,
     contextKey: `slack:message:${message.channel}:${message.ts ?? "unknown"}`,
-    forceSenderIsOwnerFalse: true,
-    trusted: false,
   });
 
   const envelopeFrom =
@@ -1379,6 +1377,8 @@ export async function prepareSlackMessage(params: {
     logVerbose(`slack inbound: channel=${message.channel} from=${slackFrom} preview="${preview}"`);
   }
 
+  const updateLastRouteSessionKey = resolveInboundLastRouteSessionKey({ route, sessionKey });
+
   return {
     ctx,
     account,
@@ -1392,13 +1392,15 @@ export async function prepareSlackMessage(params: {
       record: {
         updateLastRoute: isDirectMessage
           ? {
-              sessionKey: resolveInboundLastRouteSessionKey({ route, sessionKey }),
+              sessionKey: updateLastRouteSessionKey,
               channel: "slack",
               to: `user:${message.user}`,
               accountId: route.accountId,
               threadId: effectiveMessageThreadId,
               mainDmOwnerPin:
-                pinnedMainDmOwner && message.user
+                updateLastRouteSessionKey === route.mainSessionKey &&
+                pinnedMainDmOwner &&
+                message.user
                   ? {
                       ownerRecipient: pinnedMainDmOwner,
                       senderRecipient: normalizeLowercaseStringOrEmpty(message.user),
