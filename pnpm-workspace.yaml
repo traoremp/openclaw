@@ -4,7 +4,7 @@ packages:
   - packages/*
   - extensions/*
 
-minimumReleaseAge: 0
+minimumReleaseAge: 2880
 
 minimumReleaseAgeExclude:
   - "@openclaw/fs-safe@0.3.0"
@@ -56,18 +56,7 @@ minimumReleaseAgeExclude:
   - "rolldown"
   - "sqlite-vec"
   - "sqlite-vec-*"
-  - "@vitest/browser-playwright"
-  - "@vitest/browser"
-  - "vitest"
-  - "@vitest/coverage-v8"
-  - "@vitest/ui"
-  - "@vitest/expect"
-  - "@vitest/runner"
-  - "@vitest/snapshot"
-  - "@vitest/spy"
-  - "@vitest/utils"
-  - "@vitest/mocker"
-  - "@vitest/pretty-format"
+  - "rastermill"
 
 nodeLinker: hoisted
 blockExoticSubdeps: true
@@ -117,6 +106,7 @@ allowBuilds:
   tree-sitter-bash: false
   openclaw: true
   "@openclaw/proxyline": true
+  rastermill: true
 
 packageExtensions:
   baileys:
