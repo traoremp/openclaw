@@ -31,14 +31,13 @@ import { type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { shouldAttemptTtsPayload } from "../../tts/tts-config.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
+import type { MessagingToolSend } from "../embedded-agent-messaging.types.js";
+import type { EmbeddedAgentRunMeta } from "../embedded-agent-runner/types.js";
 import { isNestedAgentLane } from "../lanes.js";
-import type { MessagingToolSend } from "../pi-embedded-messaging.types.js";
-import type { EmbeddedPiRunMeta } from "../pi-embedded-runner/types.js";
 import type { AgentCommandOpts, AgentCommandResultMetaOverrides } from "./types.js";
 
 const ttsRuntimeLoader = createLazyImportLoader(() => import("../../tts/tts.runtime.js"));
-
-type RunResult = Awaited<ReturnType<(typeof import("../pi-embedded.js"))["runEmbeddedPiAgent"]>>;
+type RunResult = Awaited<ReturnType<(typeof import("../embedded-agent.js"))["runEmbeddedAgent"]>>;
 type DurableSendResult = Awaited<ReturnType<typeof sendDurableMessageBatch>>;
 
 export type AgentCommandDeliveryPayloadStatus = "sent" | "suppressed" | "failed";
@@ -74,7 +73,7 @@ export type AgentCommandDeliveryStatus = {
 
 export type AgentCommandDeliveryResult = {
   payloads: ReturnType<typeof projectOutboundPayloadPlanForJson>;
-  meta: EmbeddedPiRunMeta & AgentCommandResultMetaOverrides;
+  meta: EmbeddedAgentRunMeta & AgentCommandResultMetaOverrides;
   didSendViaMessagingTool?: boolean;
   messagingToolSentTexts?: string[];
   messagingToolSentMediaUrls?: string[];
@@ -89,13 +88,13 @@ type FreshSessionEntryForDeliveryResolver = () => Promise<SessionEntry | undefin
 
 type FreshSessionDeliveryRefreshParams =
   | {
-      expectedSessionIdForFreshDelivery: string;
-      resolveFreshSessionEntryForDelivery: FreshSessionEntryForDeliveryResolver;
-    }
+    expectedSessionIdForFreshDelivery: string;
+    resolveFreshSessionEntryForDelivery: FreshSessionEntryForDeliveryResolver;
+  }
   | {
-      expectedSessionIdForFreshDelivery?: string;
-      resolveFreshSessionEntryForDelivery?: undefined;
-    };
+    expectedSessionIdForFreshDelivery?: string;
+    resolveFreshSessionEntryForDelivery?: undefined;
+  };
 
 type DeliverAgentCommandResultParams = {
   cfg: OpenClawConfig;
@@ -159,9 +158,9 @@ function logNestedOutput(
 }
 
 function mergeResultMetaOverrides(
-  meta: EmbeddedPiRunMeta,
+  meta: EmbeddedAgentRunMeta,
   overrides: AgentCommandResultMetaOverrides | undefined,
-): EmbeddedPiRunMeta & AgentCommandResultMetaOverrides {
+): EmbeddedAgentRunMeta & AgentCommandResultMetaOverrides {
   if (!overrides) {
     return meta;
   }
@@ -431,11 +430,11 @@ export function normalizeAgentCommandReplyPayloads(params: {
   const responsePrefixContext = replyPrefix.responsePrefixContextProvider();
   const transformReplyPayload = deliveryPlugin?.messaging?.transformReplyPayload
     ? (payload: ReplyPayload) =>
-        deliveryPlugin.messaging?.transformReplyPayload?.({
-          payload,
-          cfg: params.cfg,
-          accountId: params.accountId,
-        }) ?? payload
+      deliveryPlugin.messaging?.transformReplyPayload?.({
+        payload,
+        cfg: params.cfg,
+        accountId: params.accountId,
+      }) ?? payload
     : undefined;
 
   const normalizedPayloads: ReplyPayload[] = [];
@@ -501,9 +500,9 @@ export async function deliverAgentCommandResult(
       deliveryChannel === deliveryPlan.resolvedChannel
         ? deliveryPlan
         : {
-            ...deliveryPlan,
-            resolvedChannel: deliveryChannel,
-          };
+          ...deliveryPlan,
+          resolvedChannel: deliveryChannel,
+        };
     // Channel docking: delivery channels are resolved via plugin registry.
     const deliveryPlugin =
       deliver && !isInternalMessageChannel(deliveryChannel)
@@ -519,16 +518,16 @@ export async function deliverAgentCommandResult(
     const resolved =
       deliver && isDeliveryChannelKnown && deliveryChannel
         ? resolveAgentOutboundTarget({
-            cfg,
-            plan: effectiveDeliveryPlan,
-            targetMode,
-            validateExplicitTarget: true,
-          })
+          cfg,
+          plan: effectiveDeliveryPlan,
+          targetMode,
+          validateExplicitTarget: true,
+        })
         : {
-            resolvedTarget: null,
-            resolvedTo: effectiveDeliveryPlan.resolvedTo,
-            targetMode,
-          };
+          resolvedTarget: null,
+          resolvedTo: effectiveDeliveryPlan.resolvedTo,
+          targetMode,
+        };
     const resolvedThreadId = deliveryPlan.resolvedThreadId ?? opts.threadId;
     const replyTransport =
       deliveryPlugin?.threading?.resolveReplyTransport?.({
@@ -674,13 +673,13 @@ export async function deliverAgentCommandResult(
   const mediaNormalizedReplyPayloads =
     deliver && !deliveryStatus && !isInternalMessageChannel(deliveryChannel)
       ? await normalizeReplyMediaPathsForDelivery({
-          cfg,
-          payloads: normalizedReplyPayloads,
-          sessionKey: effectiveSessionKey,
-          outboundSession,
-          deliveryChannel,
-          accountId: resolvedAccountId,
-        })
+        cfg,
+        payloads: normalizedReplyPayloads,
+        sessionKey: effectiveSessionKey,
+        outboundSession,
+        deliveryChannel,
+        accountId: resolvedAccountId,
+      })
       : normalizedReplyPayloads;
   const ttsAgentId =
     outboundSession?.agentId ??
@@ -689,12 +688,12 @@ export async function deliverAgentCommandResult(
   const ttsNormalizedReplyPayloads =
     deliver && !deliveryStatus && !isInternalMessageChannel(deliveryChannel)
       ? await maybeApplyTtsToDeliveryPayloads({
-          cfg,
-          payloads: mediaNormalizedReplyPayloads,
-          channel: deliveryChannel,
-          agentId: ttsAgentId ?? undefined,
-          accountId: resolvedAccountId,
-        })
+        cfg,
+        payloads: mediaNormalizedReplyPayloads,
+        channel: deliveryChannel,
+        agentId: ttsAgentId ?? undefined,
+        accountId: resolvedAccountId,
+      })
       : mediaNormalizedReplyPayloads;
   const outboundPayloadPlan = createOutboundPayloadPlan(ttsNormalizedReplyPayloads);
   const normalizedPayloads = projectOutboundPayloadPlanForJson(outboundPayloadPlan);
