@@ -1455,12 +1455,6 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/speech-core:
-    devDependencies:
-      '@openclaw/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-
   extensions/stepfun:
     devDependencies:
       '@openclaw/plugin-sdk':
@@ -1797,6 +1791,12 @@ importers:
   packages/plugin-sdk: {}
 
   packages/sdk: {}
+
+  packages/speech-core:
+    dependencies:
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
 
   ui:
     dependencies:
