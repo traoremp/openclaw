@@ -1822,6 +1822,8 @@ importers:
         specifier: workspace:*
         version: link:../llm-core
 
+  packages/media-generation-core: {}
+
   packages/memory-host-sdk: {}
 
   packages/net-policy:
