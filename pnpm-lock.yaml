@@ -1840,6 +1840,8 @@ importers:
 
   packages/memory-host-sdk: {}
 
+  packages/model-catalog-core: {}
+
   packages/net-policy:
     dependencies:
       ipaddr.js:
