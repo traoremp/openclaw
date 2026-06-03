@@ -96,9 +96,9 @@ export async function fetchOrders(params: {
 
 export async function fetchBars(symbol: string, timeframe: string, limit: number): Promise<Bar[]> {
   const start = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const qs = new URLSearchParams({ timeframe, limit: String(limit), start });
+  const qs = new URLSearchParams({ timeframe, limit: String(limit), start, sort: "desc" });
   const res = await alpacaGet<{ bars: Bar[] }>(`/v2/stocks/${symbol}/bars?${qs}`, DATA_BASE);
-  return res.bars ?? [];
+  return (res.bars ?? []).reverse();
 }
 
 export async function fetchNews(symbols: string[], limit = 10): Promise<NewsItem[]> {

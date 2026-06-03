@@ -5,9 +5,9 @@ import {
 } from "openclaw/plugin-sdk/cli-backend";
 
 const GEMINI_MODEL_ALIASES: Record<string, string> = {
-  pro: "gemini-3.1-pro-preview",
-  flash: "gemini-3.1-flash-preview",
-  "flash-lite": "gemini-3.1-flash-lite-preview",
+  pro: "gemini-3-pro-preview",
+  flash: "gemini-3-flash-preview",
+  "flash-lite": "gemini-3-flash-lite-preview",
 };
 const GEMINI_CLI_DEFAULT_MODEL_REF = "google-gemini-cli/gemini-3-flash-preview";
 
