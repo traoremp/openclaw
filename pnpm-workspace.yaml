@@ -4,7 +4,7 @@ packages:
   - packages/*
   - extensions/*
 
-minimumReleaseAge: 2880
+minimumReleaseAge: 0
 
 minimumReleaseAgeExclude:
   - "@openclaw/fs-safe@0.3.0"
@@ -61,6 +61,18 @@ minimumReleaseAgeExclude:
   - "sqlite-vec-*"
   - "rastermill"
   - "clawpdf"
+  - "@vitest/browser-playwright"
+  - "@vitest/browser"
+  - "vitest"
+  - "@vitest/coverage-v8"
+  - "@vitest/ui"
+  - "@vitest/expect"
+  - "@vitest/runner"
+  - "@vitest/snapshot"
+  - "@vitest/spy"
+  - "@vitest/utils"
+  - "@vitest/mocker"
+  - "@vitest/pretty-format"
 
 nodeLinker: hoisted
 blockExoticSubdeps: true
